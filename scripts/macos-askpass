@@ -1,0 +1,15 @@
+#!/bin/sh
+# SSH_ASKPASS for macOS: asks in a native dialog with hidden input, so a FIDO
+# PIN or passphrase goes straight to ssh and never through a terminal, a log
+# or an agent transcript. $1 is ssh's prompt.
+#   SSH_ASKPASS=/path/to/macos-askpass SSH_ASKPASS_REQUIRE=force ssh-keygen ...
+if [ "$SSH_ASKPASS_PROMPT" = none ]; then
+  # Notification only, e.g. ssh-agent's "Confirm user presence for key ...".
+  exec /usr/bin/osascript -e 'on run argv' \
+    -e 'display notification (item 1 of argv) with title "ssh"' \
+    -e 'end run' -- "$1"
+fi
+exec /usr/bin/osascript \
+  -e 'on run argv' \
+  -e 'return text returned of (display dialog (item 1 of argv) default answer "" with hidden answer with title "ssh" buttons {"Cancel", "OK"} default button "OK")' \
+  -e 'end run' -- "$1"
