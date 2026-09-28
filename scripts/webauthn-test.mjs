@@ -78,8 +78,9 @@ const chromeExited = new Promise(r => chrome.on("exit", r));
 async function done(result) {
   console.log(JSON.stringify({ uv, ...result }));
   chrome.kill();
-  await Promise.race([chromeExited, new Promise(r => setTimeout(r, 3000))]);
-  rmSync(profile, { recursive: true, force: true });
+  await Promise.race([chromeExited, new Promise(r => setTimeout(r, 5000))]);
+  // Chrome's helper processes can still be writing to the profile briefly.
+  rmSync(profile, { recursive: true, force: true, maxRetries: 10, retryDelay: 300 });
   process.exit(result.ok ? 0 : 1);
 }
 setTimeout(() => done({ ok: false, error: "timed out after 240s" }), 240000);

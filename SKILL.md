@@ -140,8 +140,11 @@ before changing either script.
    ```
    It runs in the foreground; Ctrl-C removes the device. `--vid` picks a
    vendor (1050 = Yubico). It posts "devbox is waiting" when a remote request
-   needs a touch. The relay's ssh session carries no agent, X11 or
-   RemoteForward, so it doesn't interfere with Steps 1 and 3.
+   needs a touch, for both CTAP2 and the U2F polling Chrome falls back to.
+   `--debug` logs the CTAPHID traffic, which is the fastest way to tell "the
+   key is waiting for a touch" from "something failed". The relay's ssh
+   session carries no agent, X11 or RemoteForward, so it doesn't interfere
+   with Steps 1 and 3.
 3. **Verify, no touch needed:** `ssh devbox fido2-token -L` (from the
    `fido2-tools` package) lists the relay device. `fido2-token -I /dev/hidrawN`
    returns the real key's firmware and versions.
@@ -224,5 +227,6 @@ supervisor restarts it.
 | `problem with fast path key listing: Forbidden` | the extra socket refuses some commands | harmless |
 | Chrome on the remote doesn't see the key | the hidraw node is root-only (no seat, so no uaccess ACL) | the relay chowns it to `SUDO_UID`; run it through sudo |
 | relay drops responses or hangs | the device isn't kept on a run loop, or reads go through `read_packet()` | keep the relay's continuous run loop |
+| a headless WebAuthn request never resolves, even after its timeout | headless Chrome keeps timed-out requests pending | run the relay with `--debug`: steady `cmd=83 len=2` means waiting for a touch; `cmd=bf` means an error |
 | keytocard *moved* the key when you meant to copy | the save prompt was answered yes | restore `private-keys-v1.d/<keygrip>.key` from the backup |
 | passkey login hangs in headless Chrome | UV needs Chrome's PIN dialog | Step 2.5: visible Chrome over X11 |

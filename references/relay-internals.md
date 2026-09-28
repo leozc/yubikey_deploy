@@ -28,10 +28,25 @@ browser on remote ── /dev/hidrawN ── uhid ── fido-uhid-relay.py (roo
   initialization packet is the command with the high bit set.
 - A client sends `INIT` (0x86) on the broadcast CID `ffffffff` with an 8-byte
   nonce. The reply, also on broadcast, carries the nonce and the new CID.
-- While waiting, the key sends `KEEPALIVE` (0xBB) on the client's CID, with
-  status 1 (processing) or 2 (user presence needed). The local relay uses
-  status 2 on remote-owned CIDs to post the "touch your key" notification.
-  A CID counts as remote-owned once the remote has sent a command on it.
+- CTAP2 requests (`CBOR`, 0x90) wait for a touch inside one transaction. The
+  key sends `KEEPALIVE` (0xBB) with status 2 (user presence needed) until it
+  is touched or times out.
+- U2F requests (`MSG`, 0x83) don't wait. The key answers at once with status
+  word `0x6985` ("conditions not satisfied") and blinks, and the client
+  re-polls several times a second until a touch makes a poll succeed. Chrome
+  uses this U2F path for CTAP 2.0 keys that have a PIN set, whenever the site
+  doesn't ask for user verification: it sent one `CBOR` GetInfo, then only
+  `MSG` polls.
+- The local relay posts its "touch your key" notification on either signal,
+  but only for CIDs the remote has sent a command on. Mac-local clients share
+  the device and don't trigger it.
+- `--debug` logs every initialization packet (direction, CID, command, and
+  length or error code). A steady stream of `cmd=83 len=2` replies means the
+  key is waiting for a touch. `cmd=bf` is a CTAPHID error. Chrome stopped
+  talking to the device after one, and never settled the request.
+- Headless Chrome didn't reject a request whose WebAuthn timeout had passed;
+  it stayed pending. That's why `webauthn-test.mjs` enforces its own 240 s
+  limit.
 
 ## macOS side
 
@@ -86,7 +101,7 @@ browser on remote ── /dev/hidrawN ── uhid ── fido-uhid-relay.py (roo
   (the user, and root) can send CTAP requests. Each one needs a physical
   touch, and user verification additionally needs the PIN typed in the
   browser. No key material ever leaves the key.
-- Verified with Ubuntu 24.04 (kernel 6.8), Google Chrome 150 (.deb, headless
+- Tested with Ubuntu 24.04 (kernel 6.8), Google Chrome 150 (.deb, headless
   and over X11), a YubiKey 5 on CTAP 2.0 firmware, python-fido2 2.2 and
   Homebrew OpenSSH 10.5 on macOS. Snap Chromium is untested. Its confinement
   gates hidraw through the `u2f-devices` interface, keyed on known vendor

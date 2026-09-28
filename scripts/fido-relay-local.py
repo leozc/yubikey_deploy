@@ -29,8 +29,20 @@ from fido2.hid.macos import (
 
 PKT = 64
 BROADCAST_CID = b"\xff\xff\xff\xff"
+CTAPHID_MSG = 0x83
 CTAPHID_KEEPALIVE = 0xBB
+CTAPHID_ERROR = 0xBF
 STATUS_UPNEEDED = 2
+SW_CONDITIONS_NOT_SATISFIED = b"\x69\x85"  # U2F: touch needed, client re-polls
+
+
+def waiting_for_touch(pkt):
+    # CTAP2 sends KEEPALIVE(UPNEEDED). U2F (which Chrome falls back to for
+    # CTAP 2.0 keys with a PIN when no UV is asked) answers each poll with a
+    # bare status word 0x6985 instead, so both need to trigger the notice.
+    if pkt[4] == CTAPHID_KEEPALIVE:
+        return pkt[7] == STATUS_UPNEEDED
+    return pkt[4] == CTAPHID_MSG and pkt[5:7] == b"\x00\x02" and pkt[7:9] == SW_CONDITIONS_NOT_SATISFIED
 
 
 def parse_args():
@@ -47,7 +59,19 @@ def parse_args():
         help="only relay a key with this USB vendor id in hex (1050 = Yubico)",
     )
     ap.add_argument("--no-notify", action="store_true", help="no touch notifications")
+    ap.add_argument("--debug", action="store_true",
+                    help="log CTAPHID commands and touch-wait keepalives to stderr")
     return ap.parse_args()
+
+
+def log_packet(direction, pkt):
+    # Initialization packets only (high bit set); continuation packets are noise.
+    if pkt[4] & 0x80:
+        if pkt[4] in (CTAPHID_KEEPALIVE, CTAPHID_ERROR):
+            extra = f" code={pkt[7]}"
+        else:
+            extra = f" len={pkt[5] << 8 | pkt[6]}"
+        print(f"{direction} cid={pkt[:4].hex()} cmd={pkt[4]:02x}{extra}", file=sys.stderr, flush=True)
 
 
 def main():
@@ -77,6 +101,8 @@ def main():
         if args.no_notify or time.time() - last_notice[0] < 10:
             return
         last_notice[0] = time.time()
+        if args.debug:
+            print("notify: remote is waiting for a touch", file=sys.stderr, flush=True)
         subprocess.Popen([
             "/usr/bin/osascript",
             "-e", "on run argv",
@@ -98,7 +124,10 @@ def main():
     def device_to_remote():
         while True:
             pkt = conn.read_queue.get()
-            if pkt[4] == CTAPHID_KEEPALIVE and pkt[7] == STATUS_UPNEEDED and pkt[:4] in remote_cids:
+            if args.debug:
+                mine = pkt[:4] in remote_cids | {BROADCAST_CID}
+                log_packet("key->remote" if mine else "key->other-local-client", pkt)
+            if pkt[:4] in remote_cids and waiting_for_touch(pkt):
                 notify_touch()
             proc.stdin.write(pkt[:PKT].ljust(PKT, b"\0"))
             proc.stdin.flush()
@@ -110,6 +139,8 @@ def main():
     while len(pkt := proc.stdout.read(PKT)) == PKT:
         if pkt[:4] != BROADCAST_CID:
             remote_cids.add(pkt[:4])
+        if args.debug:
+            log_packet("remote->key", pkt)
         conn.write_packet(pkt)
     sys.exit(proc.wait())
 
